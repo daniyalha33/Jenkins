@@ -11,7 +11,7 @@ pipeline {
             steps {
                 echo 'Cloning repository...'
                 // Make sure this URL matches your repo link
-                git branch: 'main', url: 'https://github.com/<your-username>/<your-repo-name>.git'
+                git branch: 'master', url: 'https://github.com/daniyalha33/Jenkins.git'
             }
         }
 
