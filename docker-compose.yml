@@ -23,7 +23,7 @@ services:
       - ./frontend:/app
     command: sh -c "npm install && npm run build && npx serve -s dist"
     ports:
-      - "8080:3000"
+      - "8085:3000"
     environment:
       - NODE_ENV=production
     depends_on:
