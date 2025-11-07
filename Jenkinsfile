@@ -14,29 +14,17 @@ pipeline {
         }
 
         stage('Set Up Docker Environment') {
-    steps {
-        echo '⚙️ Checking Docker and Docker Compose installation...'
-        sh '''
-            docker --version
-            if docker compose version >/dev/null 2>&1; then
-                echo "✅ Docker Compose v2 detected"
-            else
-                echo "⚠️ Installing Docker Compose plugin..."
-                apt-get update -y && apt-get install -y docker-compose-plugin
-            fi
-            docker compose version
-        '''
-    }
-}
-
-
-        stage('Clean Previous Containers') {
             steps {
-                echo '🧹 Cleaning up old containers and volumes...'
+                echo '⚙️ Checking Docker and Docker Compose installation...'
                 sh '''
-                    docker compose down --volumes --remove-orphans || true
-                    docker system prune -af || true
-                    docker volume prune -f || true
+                    docker --version
+                    if docker-compose version >/dev/null 2>&1; then
+                        echo "✅ Docker Compose detected"
+                    else
+                        echo "⚠️ Installing Docker Compose..."
+                        apt-get update -y && apt-get install -y docker-compose
+                    fi
+                    docker-compose version
                 '''
             }
         }
@@ -45,7 +33,7 @@ pipeline {
             steps {
                 echo '🚀 Building and starting containers...'
                 sh '''
-                    docker compose up -d --build
+                    docker-compose up -d --build
                 '''
             }
         }
