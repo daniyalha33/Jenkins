@@ -18,13 +18,31 @@ pipeline {
                 echo '⚙️ Checking Docker and Docker Compose installation...'
                 sh '''
                     docker --version
-                    if docker-compose version >/dev/null 2>&1; then
-                        echo "✅ Docker Compose detected"
+                    if docker compose version >/dev/null 2>&1; then
+                        echo "✅ Docker Compose v2 detected"
                     else
-                        echo "⚠️ Installing Docker Compose..."
-                        apt-get update -y && apt-get install -y docker-compose
+                        echo "⚠️ Installing Docker Compose plugin..."
+                        apt-get update -y && apt-get install -y docker-compose-plugin
                     fi
-                    docker-compose version
+                    docker compose version
+                '''
+            }
+        }
+
+        stage('Clean Previous Containers') {
+            steps {
+                echo '🧹 Cleaning up old containers and volumes...'
+                sh '''
+                    echo "🔍 Removing existing CI containers if any..."
+                    # 🆕 Added: remove any containers that have _ci in name
+                    docker ps -aq --filter "name=_ci" | xargs -r docker rm -f || true
+
+                    echo "🔍 Bringing down any docker-compose project..."
+                    docker compose down --volumes --remove-orphans || true
+
+                    echo "🧼 Pruning unused images, networks, and volumes..."
+                    docker system prune -af || true
+                    docker volume prune -f || true
                 '''
             }
         }
@@ -33,7 +51,7 @@ pipeline {
             steps {
                 echo '🚀 Building and starting containers...'
                 sh '''
-                    docker-compose up -d --build
+                    docker compose up -d --build
                 '''
             }
         }
