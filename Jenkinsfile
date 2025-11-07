@@ -1,8 +1,7 @@
 pipeline {
-    agent any   // Jenkins can run this on any available agent (your EC2 instance)
+    agent any
 
     environment {
-        // Define a name for your docker-compose project (optional but helps avoid conflicts)
         COMPOSE_PROJECT_NAME = "jenkins_ci_app"
     }
 
@@ -10,7 +9,6 @@ pipeline {
         stage('Checkout Code from GitHub') {
             steps {
                 echo 'Cloning repository...'
-                // Make sure this URL matches your repo link
                 git branch: 'master', url: 'https://github.com/daniyalha33/Jenkins.git'
             }
         }
@@ -26,8 +24,7 @@ pipeline {
         stage('Build and Run Application') {
             steps {
                 echo 'Starting containers using docker-compose...'
-                // Run your containers using the new docker-compose.yml
-                sh 'docker-compose up -d'
+                sh 'docker-compose up -d --build'
             }
         }
 
@@ -41,29 +38,16 @@ pipeline {
         stage('Application Health Check') {
             steps {
                 echo 'Checking if backend and frontend are accessible...'
-                // Adjust URLs according to your compose ports (e.g., 5000, 4000, 8080)
-                sh 'sleep 10'  // give containers time to start
-                sh 'curl -I http://localhost:5000 || true'
+                sh 'sleep 10'
                 sh 'curl -I http://localhost:4000 || true'
-                sh 'curl -I http://localhost:8080 || true'
-            }
-        }
-
-        stage('Clean Up Environment') {
-            steps {
-                echo 'Stopping and removing containers...'
-                sh 'docker-compose down'
+                sh 'curl -I http://localhost:8085 || true'
             }
         }
     }
 
     post {
-        always {
-            echo 'Cleaning up any leftover containers or networks...'
-            sh 'docker system prune -f || true'
-        }
         success {
-            echo '✅ Build pipeline completed successfully!'
+            echo '✅ Build pipeline completed successfully! Containers are still running.'
         }
         failure {
             echo '❌ Build pipeline failed. Please check the Jenkins logs for details.'
