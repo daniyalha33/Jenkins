@@ -16,7 +16,7 @@ services:
     volumes:
       - ./frontend:/app
     ports:
-      - "8080:5173" # vite default
+      - "8085:5173" # vite default
     command: sh -c "npm install && npm run dev"
     depends_on:
       - backend
