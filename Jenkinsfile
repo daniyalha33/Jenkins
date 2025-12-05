@@ -69,10 +69,11 @@ pipeline {
                 echo '🩺 Checking if backend and frontend are accessible...'
                 sh '''
                     sleep 10
-                    echo "Backend (port 4000):"
-                    curl -I http://localhost:4000 || true
-                    echo "Frontend (port 8085):"
-                    curl -I http://localhost:8085 || true
+                    echo "Backend (EC2 public IP port 4000):"
+                    curl -I http://34.239.165.164:4000 || true
+                    echo "Frontend (EC2 public IP port 8085):"
+                    curl -I http://34.239.165.164:8085 || true
+
                 '''
             }
         }
