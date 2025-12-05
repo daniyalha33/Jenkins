@@ -58,15 +58,18 @@ pipeline {
         }
 
         stage('Application Health Check') {
-            steps {
-                echo '🩺 Checking if frontend and backend are accessible...'
-                sh """
-                    sleep 10
-                    curl -I http://${EC2_IP}:4000 || true
-                    curl -I http://${EC2_IP}:8085 || true
-                """
-            }
-        }
+    steps {
+        echo '🩺 Checking if frontend and backend are accessible...'
+        sh """
+            sleep 10
+            echo "Backend (port 4000):"
+            curl -I http://localhost:4000 || true
+            echo "Frontend (port 8085):"
+            curl -I http://localhost:8085 || true
+        """
+    }
+}
+
 
         stage('Checkout Selenium Tests') {
             steps {
