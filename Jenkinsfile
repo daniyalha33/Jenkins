@@ -27,16 +27,21 @@ pipeline {
         }
 
         stage('Clean Previous Containers') {
-            steps {
-                echo '🧹 Cleaning up old containers...'
-                sh '''
-                    docker ps -aq --filter "name=_ci" | xargs -r docker rm -f || true
-                    docker compose down --volumes --remove-orphans || true
-                    docker system prune -af || true
-                    docker volume prune -f || true
-                '''
-            }
-        }
+    steps {
+        echo '🧹 Cleaning up old containers...'
+        sh '''
+            # Stop and remove any container with name backend_ci or frontend_ci
+            docker rm -f backend_ci frontend_ci || true
+
+            # Remove any containers with _ci in name
+            docker ps -aq --filter "name=_ci" | xargs -r docker rm -f || true
+
+            docker compose down --volumes --remove-orphans || true
+            docker system prune -af || true
+            docker volume prune -f || true
+        '''
+    }
+}
 
         stage('Build and Run Application') {
             steps {
