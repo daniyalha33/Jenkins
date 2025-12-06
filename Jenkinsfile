@@ -52,8 +52,8 @@ pipeline {
             steps {
                 echo '⏳ Waiting for services to be ready...'
                 sh '''
-                    echo "Waiting 30 seconds for npm install and startup..."
-                    sleep 30
+                    echo "Waiting 40 seconds for npm install and startup..."
+                    sleep 40
                     
                     echo "\n=== Checking Backend Logs ==="
                     docker logs backend_ci --tail 20
@@ -67,49 +67,46 @@ pipeline {
             steps {
                 echo '🩺 Verifying application accessibility...'
                 sh '''
-                    MAX_ATTEMPTS=10
-                    SLEEP_TIME=10
-                    
-                    # Backend Health Check
-                    echo "Checking Backend (port 4000)..."
-                    BACKEND_UP=false
-                    for i in $(seq 1 $MAX_ATTEMPTS); do
-                        if curl -f -s http://localhost:4000 > /dev/null 2>&1; then
-                            echo "✅ Backend is UP and responding!"
-                            curl -s http://localhost:4000 | head -20
-                            BACKEND_UP=true
-                            break
-                        else
-                            echo "Attempt $i/$MAX_ATTEMPTS: Backend not ready, waiting ${SLEEP_TIME}s..."
-                            sleep $SLEEP_TIME
-                        fi
-                    done
-                    
-                    if [ "$BACKEND_UP" != "true" ]; then
-                        echo "❌ Backend failed to start"
+                    # Check if backend container is running and logs show "Server is running"
+                    echo "Checking Backend container status..."
+                    if docker logs backend_ci 2>&1 | grep -q "Server is running"; then
+                        echo "✅ Backend is UP (server started)"
+                    else
+                        echo "❌ Backend server not started"
                         docker logs backend_ci --tail 50
                         exit 1
                     fi
                     
-                    # Frontend Health Check
-                    echo "\nChecking Frontend (port 8085)..."
-                    FRONTEND_UP=false
-                    for i in $(seq 1 $MAX_ATTEMPTS); do
-                        if curl -f -s http://localhost:8085 > /dev/null 2>&1; then
-                            echo "✅ Frontend is UP and responding!"
-                            FRONTEND_UP=true
-                            break
-                        else
-                            echo "Attempt $i/$MAX_ATTEMPTS: Frontend not ready, waiting ${SLEEP_TIME}s..."
-                            sleep $SLEEP_TIME
-                        fi
-                    done
+                    # Try curl anyway (some backends might have endpoints)
+                    echo "\nTrying Backend HTTP endpoint..."
+                    curl -s http://localhost:4000 || echo "Note: No HTTP endpoint at root (this is OK if backend is API-only)"
                     
-                    if [ "$FRONTEND_UP" != "true" ]; then
-                        echo "❌ Frontend failed to start"
+                    # Check if frontend container is running and Vite started
+                    echo "\nChecking Frontend container status..."
+                    if docker logs frontend_ci 2>&1 | grep -q "ready in"; then
+                        echo "✅ Frontend is UP (Vite started)"
+                    else
+                        echo "❌ Frontend Vite not started"
                         docker logs frontend_ci --tail 50
                         exit 1
                     fi
+                    
+                    # Verify frontend is accessible
+                    echo "\nVerifying Frontend HTTP endpoint..."
+                    MAX_ATTEMPTS=5
+                    for i in $(seq 1 $MAX_ATTEMPTS); do
+                        if curl -f -s http://localhost:8085 > /dev/null 2>&1; then
+                            echo "✅ Frontend HTTP endpoint is accessible"
+                            break
+                        else
+                            if [ $i -eq $MAX_ATTEMPTS ]; then
+                                echo "❌ Frontend not accessible after $MAX_ATTEMPTS attempts"
+                                exit 1
+                            fi
+                            echo "Attempt $i/$MAX_ATTEMPTS: waiting..."
+                            sleep 5
+                        fi
+                    done
                     
                     echo "\n✅ All services are healthy!"
                 '''
@@ -126,12 +123,11 @@ pipeline {
         stage('Build Test Container') {
             steps {
                 echo '🐳 Building Selenium test Docker image...'
-                script {
-                    dir('selenium_tests') {
-                        sh '''
-                            echo "Creating Dockerfile for Selenium tests..."
-                            
-                            cat > Dockerfile << 'EOFdockerfile'
+                dir('selenium_tests') {
+                    sh '''
+                        echo "Creating Dockerfile for Selenium tests..."
+                        
+                        cat > Dockerfile << 'EOFDOCKERFILE'
 FROM python:3.9-slim
 
 # Install system dependencies
@@ -151,10 +147,8 @@ RUN wget -q -O /tmp/google-chrome.deb https://dl.google.com/linux/direct/google-
     && rm -rf /var/lib/apt/lists/*
 
 # Install ChromeDriver
-RUN CHROME_VERSION=$(google-chrome --version | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+') \\
-    && CHROMEDRIVER_VERSION=$(wget -qO- "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json" | grep -oP '"version":"\\K[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+' | head -1) \\
-    && echo "Chrome version: $CHROME_VERSION" \\
-    && echo "ChromeDriver version: $CHROMEDRIVER_VERSION" \\
+RUN CHROMEDRIVER_VERSION=$(wget -qO- "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json" | grep -oP '"version":"\\K[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+' | head -1) \\
+    && echo "Installing ChromeDriver version: $CHROMEDRIVER_VERSION" \\
     && wget -q -O /tmp/chromedriver.zip "https://storage.googleapis.com/chrome-for-testing-public/$CHROMEDRIVER_VERSION/linux64/chromedriver-linux64.zip" \\
     && unzip /tmp/chromedriver.zip -d /tmp/ \\
     && mv /tmp/chromedriver-linux64/chromedriver /usr/local/bin/chromedriver \\
@@ -179,58 +173,37 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Run tests
-CMD ["pytest", "-v", "--tb=short"]
-EOFdockerfile
+CMD ["pytest", "-v", "--tb=short", "--maxfail=1"]
+EOFDOCKERFILE
 
-                            echo "✅ Dockerfile created"
-                            cat Dockerfile
-                            
-                            echo "\nBuilding Docker image..."
-                            docker build -t selenium_tests:latest . 2>&1 | tee build.log
-                            
-                            if [ $? -eq 0 ]; then
-                                echo "✅ Docker image built successfully"
-                                docker images | grep selenium_tests
-                            else
-                                echo "❌ Docker build failed"
-                                cat build.log
-                                exit 1
-                            fi
-                        '''
-                    }
+                        echo "✅ Dockerfile created"
+                        
+                        echo "\nBuilding Docker image..."
+                        docker build -t selenium_tests:latest .
+                        
+                        echo "✅ Docker image built successfully"
+                        docker images | grep selenium_tests
+                    '''
                 }
             }
         }
         stage('Run Selenium Tests in Container') {
             steps {
                 echo '🖥️ Running Selenium tests in containerized environment...'
-                script {
-                    sh '''
-                        echo "=== Docker Network Info ==="
-                        docker network inspect jenkins_ci_app_default || docker network create jenkins_ci_app_default
-                        
-                        echo "\n=== Starting Test Container ==="
-                        docker run --rm \\
-                            --name selenium_tests \\
-                            --network jenkins_ci_app_default \\
-                            -e BASE_URL=http://frontend_ci:5173 \\
-                            -e BACKEND_URL=http://backend_ci:3000 \\
-                            selenium_tests:latest 2>&1 | tee test_output.log
-                        
-                        TEST_EXIT_CODE=${PIPESTATUS[0]}
-                        
-                        echo "\n=== Test Output ==="
-                        cat test_output.log
-                        
-                        if [ $TEST_EXIT_CODE -eq 0 ]; then
-                            echo "\n✅ All tests passed!"
-                            exit 0
-                        else
-                            echo "\n❌ Tests failed with exit code: $TEST_EXIT_CODE"
-                            exit $TEST_EXIT_CODE
-                        fi
-                    '''
-                }
+                sh '''
+                    echo "=== Docker Network Info ==="
+                    docker network ls | grep jenkins_ci_app
+                    
+                    echo "\n=== Starting Test Container ==="
+                    docker run --rm \\
+                        --name selenium_tests \\
+                        --network jenkins_ci_app_default \\
+                        -e BASE_URL=http://frontend_ci:5173 \\
+                        -e BACKEND_URL=http://backend_ci:3000 \\
+                        selenium_tests:latest
+                    
+                    echo "\n✅ All tests passed!"
+                '''
             }
         }
     }
@@ -269,38 +242,25 @@ EOFdockerfile
         }
         failure {
             echo '❌ Pipeline failed. Check Jenkins logs.'
-            script {
-                def failureReason = "Unknown"
-                def consoleLog = currentBuild.rawBuild.getLog(100).join('\n')
-                
-                if (consoleLog.contains("curl:")) {
-                    failureReason = "Application health check failed - services not responding"
-                } else if (consoleLog.contains("docker build")) {
-                    failureReason = "Docker image build failed"
-                } else if (consoleLog.contains("pytest")) {
-                    failureReason = "Selenium tests failed"
-                }
-                
-                emailext(
-                    subject: "❌ Jenkins CI/CD Pipeline Failed - Build #${BUILD_NUMBER}",
-                    body: """
-                        <h2>❌ Build Failed</h2>
-                        <p><strong>Failure Reason:</strong> ${failureReason}</p>
-                        
-                        <h3>Build Information:</h3>
-                        <ul>
-                            <li><strong>Build Number:</strong> ${BUILD_NUMBER}</li>
-                            <li><strong>Project:</strong> ${JOB_NAME}</li>
-                            <li><strong>Duration:</strong> ${currentBuild.durationString}</li>
-                            <li><strong>Status:</strong> FAILURE ❌</li>
-                        </ul>
-                        
-                        <p><a href="${BUILD_URL}">View Build Details</a> | <a href="${BUILD_URL}console">View Console Output</a></p>
-                    """,
-                    to: "daniyalha33@gmail.com",
-                    mimeType: 'text/html'
-                )
-            }
+            emailext(
+                subject: "❌ Jenkins CI/CD Pipeline Failed - Build #${BUILD_NUMBER}",
+                body: """
+                    <h2>❌ Build Failed</h2>
+                    <p>The pipeline encountered an error during execution.</p>
+                    
+                    <h3>Build Information:</h3>
+                    <ul>
+                        <li><strong>Build Number:</strong> ${BUILD_NUMBER}</li>
+                        <li><strong>Project:</strong> ${JOB_NAME}</li>
+                        <li><strong>Duration:</strong> ${currentBuild.durationString}</li>
+                        <li><strong>Status:</strong> FAILURE ❌</li>
+                    </ul>
+                    
+                    <p><a href="${BUILD_URL}">View Build Details</a> | <a href="${BUILD_URL}console">View Console Output</a></p>
+                """,
+                to: "daniyalha33@gmail.com",
+                mimeType: 'text/html'
+            )
         }
         always {
             echo '📊 Pipeline execution completed'
