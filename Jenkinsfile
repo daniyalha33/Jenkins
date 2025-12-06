@@ -261,11 +261,11 @@ with open('test_auth.py', 'r') as f:
     content = f.read()
 
 # Remove webdriver_manager import
-content = re.sub(r'from webdriver_manager\.chrome import ChromeDriverManager\n', '', content)
+content = re.sub(r'from webdriver_manager\\.chrome import ChromeDriverManager\\n', '', content)
 
 # Replace ChromeDriverManager().install() with '/usr/local/bin/chromedriver'
 content = re.sub(
-    r'service = Service\(ChromeDriverManager\(\)\.install\(\)\)',
+    r'service = Service\\(ChromeDriverManager\\(\\)\\.install\\(\\)\\)',
     "service = Service('/usr/local/bin/chromedriver')",
     content
 )
