@@ -127,14 +127,15 @@ pipeline {
                     sh '''
                         echo "Creating Dockerfile for Selenium tests..."
                         
-                        # Create a compatible requirements.txt file
+                        # Create a compatible requirements.txt file (including webdriver_manager to avoid import errors)
                         cat > requirements_fixed.txt << 'EOF'
 selenium==4.15.0
 pytest==7.4.4
 pytest-html==4.1.1
+webdriver-manager==4.0.1
 EOF
                         
-                        # Create a modified conftest.py to override BASE_URL
+                        # Create a modified conftest.py to override BASE_URL and fixture
                         cat > conftest.py << 'EOFCONFTEST'
 import pytest
 from selenium import webdriver
@@ -147,6 +148,7 @@ BASE_URL = os.getenv('BASE_URL', 'http://frontend_ci:5173')
 
 @pytest.fixture
 def driver():
+    """Override the driver fixture from test files"""
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
@@ -154,7 +156,7 @@ def driver():
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     
-    # Use the system ChromeDriver
+    # Use the system ChromeDriver (already installed in container)
     service = Service('/usr/local/bin/chromedriver')
     driver = webdriver.Chrome(service=service, options=options)
     driver.implicitly_wait(10)
@@ -162,11 +164,15 @@ def driver():
     yield driver
     driver.quit()
 
-# Make BASE_URL available to tests
-@pytest.fixture(scope="session", autouse=True)
-def set_base_url(request):
-    import test_signup_login
-    test_signup_login.BASE_URL = BASE_URL
+# Make BASE_URL available to all test modules
+def pytest_configure(config):
+    """Set BASE_URL in all test modules"""
+    import sys
+    for module_name in list(sys.modules.keys()):
+        if module_name.startswith('test_'):
+            module = sys.modules[module_name]
+            if hasattr(module, '__dict__'):
+                module.__dict__['BASE_URL'] = BASE_URL
 EOFCONFTEST
                         
                         cat > Dockerfile << 'EOFDOCKERFILE'
