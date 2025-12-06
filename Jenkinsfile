@@ -127,6 +127,48 @@ pipeline {
                     sh '''
                         echo "Creating Dockerfile for Selenium tests..."
                         
+                        # Create a compatible requirements.txt file
+                        cat > requirements_fixed.txt << 'EOF'
+selenium==4.15.0
+pytest==7.4.4
+pytest-html==4.1.1
+EOF
+                        
+                        # Create a modified conftest.py to override BASE_URL
+                        cat > conftest.py << 'EOFCONFTEST'
+import pytest
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+import os
+
+# Override BASE_URL for Docker environment
+BASE_URL = os.getenv('BASE_URL', 'http://frontend_ci:5173')
+
+@pytest.fixture
+def driver():
+    options = Options()
+    options.add_argument("--headless=new")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    
+    # Use the system ChromeDriver
+    service = Service('/usr/local/bin/chromedriver')
+    driver = webdriver.Chrome(service=service, options=options)
+    driver.implicitly_wait(10)
+    
+    yield driver
+    driver.quit()
+
+# Make BASE_URL available to tests
+@pytest.fixture(scope="session", autouse=True)
+def set_base_url(request):
+    import test_signup_login
+    test_signup_login.BASE_URL = BASE_URL
+EOFCONFTEST
+                        
                         cat > Dockerfile << 'EOFDOCKERFILE'
 FROM python:3.11-slim
 
@@ -163,8 +205,8 @@ RUN echo "Verifying installations..." \\
 # Set working directory
 WORKDIR /tests
 
-# Copy requirements file
-COPY requirements.txt .
+# Copy fixed requirements file
+COPY requirements_fixed.txt requirements.txt
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
@@ -177,6 +219,8 @@ CMD ["pytest", "-v", "--tb=short", "--maxfail=1"]
 EOFDOCKERFILE
 
                         echo "✅ Dockerfile created"
+                        echo "✅ conftest.py created"
+                        echo "✅ requirements_fixed.txt created"
                         
                         echo "\nBuilding Docker image..."
                         docker build -t selenium_tests:latest .
