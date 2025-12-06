@@ -270,7 +270,7 @@ content = re.sub(
     content
 )
 
-# Replace BASE_URL if it exists
+# Replace BASE_URL if it exists - FIXED REGEX
 content = re.sub(
     r'BASE_URL = ["\'].*?["\']',
     'BASE_URL = "http://frontend_ci:5173"',
