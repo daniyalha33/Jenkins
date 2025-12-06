@@ -141,14 +141,17 @@ import pytest
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 import os
 
 # Override BASE_URL for Docker environment
 BASE_URL = os.getenv('BASE_URL', 'http://frontend_ci:5173')
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def driver():
-    """Override the driver fixture from test files"""
+    """Override the driver fixture from test files - this takes precedence"""
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
@@ -156,7 +159,7 @@ def driver():
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     
-    # Use the system ChromeDriver (already installed in container)
+    # Use the system ChromeDriver (already installed in /usr/local/bin)
     service = Service('/usr/local/bin/chromedriver')
     driver = webdriver.Chrome(service=service, options=options)
     driver.implicitly_wait(10)
@@ -164,15 +167,34 @@ def driver():
     yield driver
     driver.quit()
 
-# Make BASE_URL available to all test modules
+# Helper functions that tests might use
+def wait_for_element(driver, by, value, timeout=10):
+    """Helper function to wait for element to be present"""
+    return WebDriverWait(driver, timeout).until(
+        EC.presence_of_element_located((by, value))
+    )
+
+def wait_for_clickable(driver, by, value, timeout=10):
+    """Helper function to wait for element to be clickable"""
+    return WebDriverWait(driver, timeout).until(
+        EC.element_to_be_clickable((by, value))
+    )
+
+# Inject BASE_URL into test modules when they're imported
 def pytest_configure(config):
-    """Set BASE_URL in all test modules"""
+    """Make BASE_URL available globally"""
     import sys
-    for module_name in list(sys.modules.keys()):
-        if module_name.startswith('test_'):
-            module = sys.modules[module_name]
-            if hasattr(module, '__dict__'):
-                module.__dict__['BASE_URL'] = BASE_URL
+    # Set it as a global that can be imported
+    import builtins
+    builtins.BASE_URL = BASE_URL
+    
+@pytest.fixture(scope="session", autouse=True)
+def setup_base_url():
+    """Ensure BASE_URL is set in all test modules"""
+    import sys
+    for name, module in list(sys.modules.items()):
+        if name.startswith('test_') and hasattr(module, '__dict__'):
+            module.BASE_URL = BASE_URL
 EOFCONFTEST
                         
                         cat > Dockerfile << 'EOFDOCKERFILE'
@@ -227,6 +249,42 @@ EOFDOCKERFILE
                         echo "✅ Dockerfile created"
                         echo "✅ conftest.py created"
                         echo "✅ requirements_fixed.txt created"
+                        
+                        # Patch the test file to remove webdriver_manager import and use system chromedriver
+                        echo "\nPatching test file to use system ChromeDriver..."
+                        cat > patch_test.py << 'EOFPATCH'
+import re
+import sys
+
+# Read the test file
+with open('test_auth.py', 'r') as f:
+    content = f.read()
+
+# Remove webdriver_manager import
+content = re.sub(r'from webdriver_manager\.chrome import ChromeDriverManager\n', '', content)
+
+# Replace ChromeDriverManager().install() with '/usr/local/bin/chromedriver'
+content = re.sub(
+    r'service = Service\(ChromeDriverManager\(\)\.install\(\)\)',
+    "service = Service('/usr/local/bin/chromedriver')",
+    content
+)
+
+# Replace BASE_URL if it exists
+content = re.sub(
+    r'BASE_URL = ["\'].*?["\']',
+    'BASE_URL = "http://frontend_ci:5173"',
+    content
+)
+
+# Write back
+with open('test_auth.py', 'w') as f:
+    f.write(content)
+
+print("✅ Test file patched successfully")
+EOFPATCH
+
+                        python3 patch_test.py
                         
                         echo "\nBuilding Docker image..."
                         docker build -t selenium_tests:latest .
