@@ -46,35 +46,68 @@ pipeline {
                 sh 'docker ps'
             }
         }
-        stage('Application Health Check') {
+        stage('Wait for Services') {
             steps {
-                echo '🩺 Checking if frontend and backend are accessible...'
+                echo '⏳ Waiting for services to be ready...'
                 sh '''
-                    echo "Waiting for services to start..."
+                    echo "Waiting 30 seconds for npm install and startup..."
                     sleep 30
                     
-                    echo "Backend Health Check:"
-                    for i in 1 2 3 4 5; do
-                        if curl -f http://localhost:4000 > /dev/null 2>&1; then
-                            echo "✅ Backend is UP"
-                            curl http://localhost:4000
+                    echo "\n=== Checking Backend Logs ==="
+                    docker logs backend_ci --tail 20 || true
+                    
+                    echo "\n=== Checking Frontend Logs ==="
+                    docker logs frontend_ci --tail 20 || true
+                '''
+            }
+        }
+        stage('Application Health Check') {
+            steps {
+                echo '🩺 Verifying application accessibility...'
+                sh '''
+                    MAX_ATTEMPTS=10
+                    SLEEP_TIME=10
+                    
+                    # Backend Health Check
+                    echo "Checking Backend (port 4000)..."
+                    for i in $(seq 1 $MAX_ATTEMPTS); do
+                        if curl -f -s http://localhost:4000 > /dev/null 2>&1; then
+                            echo "✅ Backend is UP and responding!"
+                            curl -s http://localhost:4000 | head -20
+                            BACKEND_UP=true
                             break
                         else
-                            echo "Attempt $i/5: Backend not ready, waiting..."
-                            sleep 10
+                            echo "Attempt $i/$MAX_ATTEMPTS: Backend not ready, waiting ${SLEEP_TIME}s..."
+                            sleep $SLEEP_TIME
                         fi
                     done
                     
-                    echo "\nFrontend Health Check:"
-                    for i in 1 2 3 4 5; do
-                        if curl -f http://localhost:8085 > /dev/null 2>&1; then
-                            echo "✅ Frontend is UP"
+                    if [ "$BACKEND_UP" != "true" ]; then
+                        echo "❌ Backend failed to start"
+                        docker logs backend_ci --tail 50
+                        exit 1
+                    fi
+                    
+                    # Frontend Health Check
+                    echo "\nChecking Frontend (port 8085)..."
+                    for i in $(seq 1 $MAX_ATTEMPTS); do
+                        if curl -f -s http://localhost:8085 > /dev/null 2>&1; then
+                            echo "✅ Frontend is UP and responding!"
+                            FRONTEND_UP=true
                             break
                         else
-                            echo "Attempt $i/5: Frontend not ready, waiting..."
-                            sleep 10
+                            echo "Attempt $i/$MAX_ATTEMPTS: Frontend not ready, waiting ${SLEEP_TIME}s..."
+                            sleep $SLEEP_TIME
                         fi
                     done
+                    
+                    if [ "$FRONTEND_UP" != "true" ]; then
+                        echo "❌ Frontend failed to start"
+                        docker logs frontend_ci --tail 50
+                        exit 1
+                    fi
+                    
+                    echo "\n✅ All services are healthy!"
                 '''
             }
         }
@@ -91,56 +124,41 @@ pipeline {
                 echo '🐳 Building Selenium test Docker image...'
                 dir('selenium_tests') {
                     sh '''
-                        # Create Dockerfile for Selenium tests
-                        cat > Dockerfile << 'EOF'
+                        # Create Dockerfile with fixed Chrome installation
+                        cat > Dockerfile << 'DOCKERFILE'
 FROM python:3.9-slim
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    wget \
-    gnupg \
-    unzip \
-    curl \
-    ca-certificates \
-    fonts-liberation \
-    libasound2 \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libatspi2.0-0 \
-    libcups2 \
-    libdbus-1-3 \
-    libdrm2 \
-    libgbm1 \
-    libgtk-3-0 \
-    libnspr4 \
-    libnss3 \
-    libwayland-client0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxfixes3 \
-    libxkbcommon0 \
-    libxrandr2 \
-    xdg-utils \
+# Install basic dependencies
+RUN apt-get update && apt-get install -y \\
+    wget \\
+    gnupg \\
+    unzip \\
+    curl \\
+    ca-certificates \\
     && rm -rf /var/lib/apt/lists/*
 
-# Install Google Chrome
-RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list \
-    && apt-get update \
-    && apt-get install -y google-chrome-stable \
+# Install Chrome using the new method (without apt-key)
+RUN wget -q -O /tmp/google-chrome-stable_current_amd64.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \\
+    && apt-get update \\
+    && apt-get install -y /tmp/google-chrome-stable_current_amd64.deb \\
+    && rm /tmp/google-chrome-stable_current_amd64.deb \\
     && rm -rf /var/lib/apt/lists/*
 
 # Install ChromeDriver
-RUN CHROMEDRIVER_VERSION=\$(curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE) && \\
-    wget -q -O /tmp/chromedriver.zip https://chromedriver.storage.googleapis.com/\$CHROMEDRIVER_VERSION/chromedriver_linux64.zip && \\
-    unzip /tmp/chromedriver.zip -d /usr/local/bin/ && \\
-    rm /tmp/chromedriver.zip && \\
-    chmod +x /usr/local/bin/chromedriver
+RUN CHROMEDRIVER_VERSION=$(wget -qO- https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json | grep -oP '"version":"\\K[^"]+' | head -1) && \\
+    wget -q -O /tmp/chromedriver-linux64.zip "https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/$CHROMEDRIVER_VERSION/linux64/chromedriver-linux64.zip" && \\
+    unzip /tmp/chromedriver-linux64.zip -d /tmp/ && \\
+    mv /tmp/chromedriver-linux64/chromedriver /usr/local/bin/chromedriver && \\
+    chmod +x /usr/local/bin/chromedriver && \\
+    rm -rf /tmp/chromedriver-linux64.zip /tmp/chromedriver-linux64
+
+# Verify installations
+RUN google-chrome --version && chromedriver --version
 
 # Set working directory
 WORKDIR /tests
 
-# Copy requirements and install Python dependencies
+# Copy requirements and install
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -149,13 +167,12 @@ COPY . .
 
 # Run tests
 CMD ["pytest", "--headless", "--maxfail=1", "--disable-warnings", "-v"]
-EOF
+DOCKERFILE
                         
-                        echo "✅ Dockerfile created"
-                        cat Dockerfile
-                        
-                        # Build the test image
+                        echo "✅ Dockerfile created successfully"
+                        echo "Building Docker image..."
                         docker build -t selenium_tests:latest .
+                        echo "✅ Docker image built successfully"
                     '''
                 }
             }
@@ -164,14 +181,17 @@ EOF
             steps {
                 echo '🖥️ Running Selenium tests in containerized environment...'
                 sh '''
-                    # Run tests in Docker container connected to app network
-                    docker run --rm \
-                        --name selenium_tests \
-                        --network jenkins_ci_app_default \
-                        -e BASE_URL=http://frontend_ci:5173 \
-                        -e BACKEND_URL=http://backend_ci:3000 \
-                        -v $(pwd)/selenium_tests:/tests \
+                    echo "Starting test container..."
+                    
+                    # Run tests connected to the same network as the app
+                    docker run --rm \\
+                        --name selenium_tests \\
+                        --network jenkins_ci_app_default \\
+                        -e BASE_URL=http://frontend_ci:5173 \\
+                        -e BACKEND_URL=http://backend_ci:3000 \\
                         selenium_tests:latest
+                    
+                    echo "✅ Tests completed successfully!"
                 '''
             }
         }
@@ -225,9 +245,6 @@ EOF
                         <li><strong>Status:</strong> FAILURE ❌</li>
                     </ul>
                     
-                    <h3>Action Required:</h3>
-                    <p>Please check the console output to identify the issue.</p>
-                    
                     <p><a href="${BUILD_URL}">View Build Details</a> | <a href="${BUILD_URL}console">View Console Output</a></p>
                 """,
                 to: "daniyalha33@gmail.com",
@@ -240,20 +257,16 @@ EOF
                 echo "=== Currently Running Containers ==="
                 docker ps
                 
-                echo "\n=== Backend Logs (last 50 lines) ==="
-                docker logs backend_ci --tail 50 || true
+                echo "\n=== Backend Logs (last 30 lines) ==="
+                docker logs backend_ci --tail 30 || true
                 
-                echo "\n=== Frontend Logs (last 50 lines) ==="
-                docker logs frontend_ci --tail 50 || true
-                
-                echo "\n=== Docker Network Info ==="
-                docker network inspect jenkins_ci_app_default || true
+                echo "\n=== Frontend Logs (last 30 lines) ==="
+                docker logs frontend_ci --tail 30 || true
             '''
         }
         cleanup {
             echo '🧹 Cleaning up test artifacts...'
             sh '''
-                # Clean up test container image
                 docker rmi selenium_tests:latest || true
             '''
         }
