@@ -96,7 +96,7 @@ const { data } = await axios.post(url, formData, {
         <p className="text-2xl font-semibold">
           {state === 'Sign Up' ? 'Please Create Account' : 'Login'}
         </p>
-        <p>Please {state === 'Sign Up' ? 'Create Account' : 'Login'} to book appointments</p>
+        <p>Please {state === 'Sign Up' ? 'Create Account' : 'Login'} to book appointment</p>
 
         {state === 'Sign Up' && (
           <>
