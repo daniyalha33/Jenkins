@@ -214,7 +214,7 @@ pipeline {
                         Test Repository: ${TEST_REPO}
                     </p>
                 """,
-                to: "daniyalha33@gmail.com",
+                to: "qasimalik@gmail.com",
                 mimeType: 'text/html'
             )
         }
