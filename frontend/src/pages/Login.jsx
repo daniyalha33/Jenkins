@@ -4,7 +4,7 @@ import { toast } from 'react-toastify';
 import axios from 'axios';
 import { AppContext } from '../context/AppContext';
 
-const backendUrl = 'http://52.91.244.102:4000';
+const backendUrl = 'http://98.93.87.2:4000';
 
 const Login = () => {
   const [state, setState] = useState('Sign Up');
