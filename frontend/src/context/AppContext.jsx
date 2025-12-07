@@ -1,7 +1,7 @@
 import { createContext, useEffect, useState } from "react";
 import axios from 'axios'
 import {toast} from 'react-toastify'
-const backendUrl ='http://52.91.244.102:4000';
+const backendUrl ='http://98.93.87.2:4000';
  export const AppContext=createContext()
  const AppContextProvider=(props)=>{
     const [doctors,setDoctors]=useState([])
