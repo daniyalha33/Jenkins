@@ -13,7 +13,7 @@ const MyAppointments = () => {
     return dateArray[0]+" "+months[Number(dateArray[1])]+" "+dateArray[2]
 
   }
-  const backendUrl = 'http://52.91.244.102:4000';
+  const backendUrl = 'http://98.93.87.2:4000';
   const getAppointmentData=async(req,res)=>{
     try {
       const {data}=await axios.get(`${backendUrl}/api/auth/list-appointments`,{headers:{Authorization:`Bearer ${token}`}})
