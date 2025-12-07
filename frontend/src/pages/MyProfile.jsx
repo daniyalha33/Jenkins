@@ -4,7 +4,7 @@ import { AppContext } from '../context/AppContext';
 import axios from 'axios';
 import { toast } from 'react-toastify';
 
-const backendUrl = 'http://52.91.244.102:4000';
+const backendUrl = 'http://98.93.87.2:4000';
 
 const MyProfile = () => {
   const { userData, setUserData, token, loadUserData } = useContext(AppContext);
