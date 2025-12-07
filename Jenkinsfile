@@ -13,6 +13,7 @@ pipeline {
                 git branch: 'master', url: "${APP_REPO}"
             }
         }
+        
         stage('Set Up Docker Environment') {
             steps {
                 echo '⚙️ Checking Docker and Docker Compose...'
@@ -22,32 +23,45 @@ pipeline {
                 '''
             }
         }
+        
         stage('Clean Previous Containers') {
             steps {
-                echo '🧹 Cleaning up old containers...'
+                echo '🧹 Cleaning up old containers and images...'
                 sh '''
-                    docker rm -f backend_ci frontend_ci selenium_tests || true
-                    docker ps -aq --filter "name=_ci" | xargs -r docker rm -f || true
-                    docker ps -aq --filter "name=selenium" | xargs -r docker rm -f || true
-                    docker compose down --volumes --remove-orphans || true
+                    # Stop and remove containers
+                    docker rm -f backend_ci frontend_ci selenium_tests 2>/dev/null || true
+                    
+                    # Clean up with docker compose
+                    docker compose down --volumes --remove-orphans 2>/dev/null || true
+                    
+                    # Remove test image
+                    docker rmi selenium_tests:latest 2>/dev/null || true
+                    
+                    # Prune system
                     docker system prune -af
                     docker volume prune -f
-                    docker rmi selenium_tests:latest || true
                 '''
             }
         }
+        
         stage('Build and Run Application') {
             steps {
                 echo '🚀 Building and starting application containers...'
                 sh 'docker compose up -d --build'
             }
         }
+        
         stage('Verify Containers') {
             steps {
                 echo '🔍 Listing running containers...'
-                sh 'docker ps'
+                sh '''
+                    docker ps
+                    echo "\n=== Docker Network ==="
+                    docker network ls | grep jenkins_ci_app || true
+                '''
             }
         }
+        
         stage('Wait for Services') {
             steps {
                 echo '⏳ Waiting for services to be ready...'
@@ -55,48 +69,45 @@ pipeline {
                     echo "Waiting 40 seconds for npm install and startup..."
                     sleep 40
                     
-                    echo "\n=== Checking Backend Logs ==="
+                    echo "\n=== Backend Logs ==="
                     docker logs backend_ci --tail 20
                     
-                    echo "\n=== Checking Frontend Logs ==="
+                    echo "\n=== Frontend Logs ==="
                     docker logs frontend_ci --tail 20
                 '''
             }
         }
+        
         stage('Application Health Check') {
             steps {
-                echo '🩺 Verifying application accessibility...'
+                echo '🩺 Verifying application health...'
                 sh '''
-                    # Check if backend container is running and logs show "Server is running"
-                    echo "Checking Backend container status..."
+                    # Check Backend
+                    echo "Checking Backend..."
                     if docker logs backend_ci 2>&1 | grep -q "Server is running"; then
-                        echo "✅ Backend is UP (server started)"
+                        echo "✅ Backend is UP"
                     else
-                        echo "❌ Backend server not started"
+                        echo "❌ Backend not ready"
                         docker logs backend_ci --tail 50
                         exit 1
                     fi
                     
-                    # Try curl anyway (some backends might have endpoints)
-                    echo "\nTrying Backend HTTP endpoint..."
-                    curl -s http://localhost:4000 || echo "Note: No HTTP endpoint at root (this is OK if backend is API-only)"
-                    
-                    # Check if frontend container is running and Vite started
-                    echo "\nChecking Frontend container status..."
+                    # Check Frontend
+                    echo "\nChecking Frontend..."
                     if docker logs frontend_ci 2>&1 | grep -q "ready in"; then
-                        echo "✅ Frontend is UP (Vite started)"
+                        echo "✅ Frontend is UP"
                     else
-                        echo "❌ Frontend Vite not started"
+                        echo "❌ Frontend not ready"
                         docker logs frontend_ci --tail 50
                         exit 1
                     fi
                     
-                    # Verify frontend is accessible
+                    # Verify frontend accessibility
                     echo "\nVerifying Frontend HTTP endpoint..."
                     MAX_ATTEMPTS=5
                     for i in $(seq 1 $MAX_ATTEMPTS); do
                         if curl -f -s http://localhost:8085 > /dev/null 2>&1; then
-                            echo "✅ Frontend HTTP endpoint is accessible"
+                            echo "✅ Frontend HTTP endpoint accessible"
                             break
                         else
                             if [ $i -eq $MAX_ATTEMPTS ]; then
@@ -112,6 +123,7 @@ pipeline {
                 '''
             }
         }
+        
         stage('Checkout Selenium Tests') {
             steps {
                 echo '🧪 Cloning Selenium test repository...'
@@ -120,194 +132,38 @@ pipeline {
                 }
             }
         }
+        
         stage('Build Test Container') {
             steps {
                 echo '🐳 Building Selenium test Docker image...'
                 dir('selenium_tests') {
                     sh '''
-                        echo "Creating Dockerfile for Selenium tests..."
-                        
-                        # Create a compatible requirements.txt file (including webdriver_manager to avoid import errors)
-                        cat > requirements_fixed.txt << 'EOF'
-selenium==4.15.0
-pytest==7.4.4
-pytest-html==4.1.1
-webdriver-manager==4.0.1
-EOF
-                        
-                        # Create a modified conftest.py to override BASE_URL and fixture
-                        cat > conftest.py << 'EOFCONFTEST'
-import pytest
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-import os
-
-# Override BASE_URL for Docker environment
-BASE_URL = os.getenv('BASE_URL', 'http://frontend_ci:5173')
-
-@pytest.fixture(scope="function")
-def driver():
-    """Override the driver fixture from test files - this takes precedence"""
-    options = Options()
-    options.add_argument("--headless=new")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    
-    # Use the system ChromeDriver (already installed in /usr/local/bin)
-    service = Service('/usr/local/bin/chromedriver')
-    driver = webdriver.Chrome(service=service, options=options)
-    driver.implicitly_wait(10)
-    
-    yield driver
-    driver.quit()
-
-# Helper functions that tests might use
-def wait_for_element(driver, by, value, timeout=10):
-    """Helper function to wait for element to be present"""
-    return WebDriverWait(driver, timeout).until(
-        EC.presence_of_element_located((by, value))
-    )
-
-def wait_for_clickable(driver, by, value, timeout=10):
-    """Helper function to wait for element to be clickable"""
-    return WebDriverWait(driver, timeout).until(
-        EC.element_to_be_clickable((by, value))
-    )
-
-# Inject BASE_URL into test modules when they're imported
-def pytest_configure(config):
-    """Make BASE_URL available globally"""
-    import sys
-    # Set it as a global that can be imported
-    import builtins
-    builtins.BASE_URL = BASE_URL
-    
-@pytest.fixture(scope="session", autouse=True)
-def setup_base_url():
-    """Ensure BASE_URL is set in all test modules"""
-    import sys
-    for name, module in list(sys.modules.items()):
-        if name.startswith('test_') and hasattr(module, '__dict__'):
-            module.BASE_URL = BASE_URL
-EOFCONFTEST
-                        
-                        cat > Dockerfile << 'EOFDOCKERFILE'
-FROM python:3.11-slim
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \\
-    wget \\
-    gnupg \\
-    unzip \\
-    curl \\
-    ca-certificates \\
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Google Chrome directly via .deb package
-RUN wget -q -O /tmp/google-chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \\
-    && apt-get update \\
-    && apt-get install -y /tmp/google-chrome.deb \\
-    && rm /tmp/google-chrome.deb \\
-    && rm -rf /var/lib/apt/lists/*
-
-# Install ChromeDriver
-RUN CHROMEDRIVER_VERSION=$(wget -qO- "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json" | grep -oP '"version":"\\K[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+' | head -1) \\
-    && echo "Installing ChromeDriver version: $CHROMEDRIVER_VERSION" \\
-    && wget -q -O /tmp/chromedriver.zip "https://storage.googleapis.com/chrome-for-testing-public/$CHROMEDRIVER_VERSION/linux64/chromedriver-linux64.zip" \\
-    && unzip /tmp/chromedriver.zip -d /tmp/ \\
-    && mv /tmp/chromedriver-linux64/chromedriver /usr/local/bin/chromedriver \\
-    && chmod +x /usr/local/bin/chromedriver \\
-    && rm -rf /tmp/chromedriver.zip /tmp/chromedriver-linux64
-
-# Verify installations
-RUN echo "Verifying installations..." \\
-    && google-chrome --version \\
-    && chromedriver --version
-
-# Set working directory
-WORKDIR /tests
-
-# Copy fixed requirements file
-COPY requirements_fixed.txt requirements.txt
-
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy test files
-COPY . .
-
-# Run tests
-CMD ["pytest", "-v", "--tb=short", "--maxfail=1"]
-EOFDOCKERFILE
-
-                        echo "✅ Dockerfile created"
-                        echo "✅ conftest.py created"
-                        echo "✅ requirements_fixed.txt created"
-                        
-                        # Patch the test file to remove webdriver_manager import and use system chromedriver
-                        echo "\nPatching test file to use system ChromeDriver..."
-                        cat > patch_test.py << 'EOFPATCH'
-import re
-import sys
-
-# Read the test file
-with open('test_auth.py', 'r') as f:
-    content = f.read()
-
-# Remove webdriver_manager import
-content = re.sub(r'from webdriver_manager\\.chrome import ChromeDriverManager\\n', '', content)
-
-# Replace ChromeDriverManager().install() with '/usr/local/bin/chromedriver'
-content = re.sub(
-    r'service = Service\\(ChromeDriverManager\\(\\)\\.install\\(\\)\\)',
-    "service = Service('/usr/local/bin/chromedriver')",
-    content
-)
-
-# Replace BASE_URL if it exists
-content = re.sub(
-    r'BASE_URL = ["\'].*?["\']',
-    'BASE_URL = "http://frontend_ci:5173"',
-    content
-)
-
-# Write back
-with open('test_auth.py', 'w') as f:
-    f.write(content)
-
-print("✅ Test file patched successfully")
-EOFPATCH
-
-                        python3 patch_test.py
+                        echo "Verifying test files..."
+                        ls -la
                         
                         echo "\nBuilding Docker image..."
                         docker build -t selenium_tests:latest .
                         
-                        echo "✅ Docker image built successfully"
+                        echo "\n✅ Docker image built successfully"
                         docker images | grep selenium_tests
                     '''
                 }
             }
         }
-        stage('Run Selenium Tests in Container') {
+        
+        stage('Run Selenium Tests') {
             steps {
                 echo '🖥️ Running Selenium tests in containerized environment...'
                 sh '''
                     echo "=== Docker Network Info ==="
-                    docker network ls | grep jenkins_ci_app
+                    docker network inspect jenkins_ci_app_default | grep -A 5 "Containers" || true
                     
                     echo "\n=== Starting Test Container ==="
-                    docker run --rm \\
-                        --name selenium_tests \\
-                        --network jenkins_ci_app_default \\
-                        -e BASE_URL=http://frontend_ci:5173 \\
-                        -e BACKEND_URL=http://backend_ci:3000 \\
+                    docker run --rm \
+                        --name selenium_tests \
+                        --network jenkins_ci_app_default \
+                        -e BASE_URL=http://frontend_ci:5173 \
+                        -e BACKEND_URL=http://backend_ci:3000 \
                         selenium_tests:latest
                     
                     echo "\n✅ All tests passed!"
@@ -315,6 +171,7 @@ EOFPATCH
             }
         }
     }
+    
     post {
         success {
             echo '✅ Build and Selenium tests completed successfully!'
@@ -330,6 +187,7 @@ EOFPATCH
                         <li><strong>Project:</strong> ${JOB_NAME}</li>
                         <li><strong>Duration:</strong> ${currentBuild.durationString}</li>
                         <li><strong>Status:</strong> SUCCESS ✅</li>
+                        <li><strong>Timestamp:</strong> ${new Date()}</li>
                     </ul>
                     
                     <h3>Application URLs:</h3>
@@ -340,14 +198,27 @@ EOFPATCH
                     
                     <h3>Test Execution:</h3>
                     <p>✅ Selenium tests executed in isolated Docker container</p>
-                    <p>✅ All test cases passed</p>
+                    <p>✅ All test cases passed successfully</p>
+                    <p>✅ Application verified on Docker network: jenkins_ci_app_default</p>
                     
-                    <p><a href="${BUILD_URL}">View Build Details</a> | <a href="${BUILD_URL}console">View Console Output</a></p>
+                    <h3>Quick Actions:</h3>
+                    <p>
+                        <a href="${BUILD_URL}">View Build Details</a> | 
+                        <a href="${BUILD_URL}console">View Console Output</a>
+                    </p>
+                    
+                    <hr>
+                    <p style="color: #666; font-size: 12px;">
+                        This is an automated message from Jenkins CI/CD Pipeline.<br>
+                        Application Repository: ${APP_REPO}<br>
+                        Test Repository: ${TEST_REPO}
+                    </p>
                 """,
                 to: "daniyalha33@gmail.com",
                 mimeType: 'text/html'
             )
         }
+        
         failure {
             echo '❌ Pipeline failed. Check Jenkins logs.'
             emailext(
@@ -362,14 +233,36 @@ EOFPATCH
                         <li><strong>Project:</strong> ${JOB_NAME}</li>
                         <li><strong>Duration:</strong> ${currentBuild.durationString}</li>
                         <li><strong>Status:</strong> FAILURE ❌</li>
+                        <li><strong>Timestamp:</strong> ${new Date()}</li>
                     </ul>
                     
-                    <p><a href="${BUILD_URL}">View Build Details</a> | <a href="${BUILD_URL}console">View Console Output</a></p>
+                    <h3>Failed Stage:</h3>
+                    <p>${currentBuild.result}</p>
+                    
+                    <h3>Immediate Actions Required:</h3>
+                    <ol>
+                        <li>Check the console output for error details</li>
+                        <li>Verify Docker containers are running properly</li>
+                        <li>Check application logs for backend and frontend</li>
+                        <li>Ensure test repository is accessible</li>
+                    </ol>
+                    
+                    <h3>Quick Actions:</h3>
+                    <p>
+                        <a href="${BUILD_URL}">View Build Details</a> | 
+                        <a href="${BUILD_URL}console">View Console Output</a>
+                    </p>
+                    
+                    <hr>
+                    <p style="color: #666; font-size: 12px;">
+                        This is an automated message from Jenkins CI/CD Pipeline.
+                    </p>
                 """,
                 to: "daniyalha33@gmail.com",
                 mimeType: 'text/html'
             )
         }
+        
         always {
             echo '📊 Pipeline execution completed'
             sh '''
@@ -377,21 +270,30 @@ EOFPATCH
                 docker ps
                 
                 echo "\n=== Backend Logs (last 30 lines) ==="
-                docker logs backend_ci --tail 30 || true
+                docker logs backend_ci --tail 30 2>/dev/null || true
                 
                 echo "\n=== Frontend Logs (last 30 lines) ==="
-                docker logs frontend_ci --tail 30 || true
+                docker logs frontend_ci --tail 30 2>/dev/null || true
                 
                 echo "\n=== Docker Images ==="
                 docker images | grep -E "selenium_tests|node" || true
+                
+                echo "\n=== Docker Networks ==="
+                docker network ls | grep jenkins_ci_app || true
             '''
         }
+        
         cleanup {
             echo '🧹 Cleaning up test artifacts...'
             sh '''
-                docker rmi selenium_tests:latest || true
-                rm -f selenium_tests/build.log || true
-                rm -f test_output.log || true
+                # Remove test container image
+                docker rmi selenium_tests:latest 2>/dev/null || true
+                
+                # Clean up test directory logs
+                rm -f selenium_tests/build.log 2>/dev/null || true
+                rm -f test_output.log 2>/dev/null || true
+                
+                echo "✅ Cleanup completed"
             '''
         }
     }
