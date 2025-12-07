@@ -261,18 +261,18 @@ with open('test_auth.py', 'r') as f:
     content = f.read()
 
 # Remove webdriver_manager import
-content = re.sub(r'from webdriver_manager\.chrome import ChromeDriverManager\n', '', content)
+content = re.sub(r'from webdriver_manager\\.chrome import ChromeDriverManager\\n', '', content)
 
 # Replace ChromeDriverManager().install() with '/usr/local/bin/chromedriver'
 content = re.sub(
-    r'service = Service\(ChromeDriverManager\(\)\.install\(\)\)',
+    r'service = Service\\(ChromeDriverManager\\(\\)\\.install\\(\\)\\)',
     "service = Service('/usr/local/bin/chromedriver')",
     content
 )
 
-# Replace BASE_URL if it exists - use double quotes in regex
+# Replace BASE_URL if it exists
 content = re.sub(
-    r'BASE_URL = ["\047].*?["\047]',
+    r'BASE_URL = ["\'].*?["\']',
     'BASE_URL = "http://frontend_ci:5173"',
     content
 )
