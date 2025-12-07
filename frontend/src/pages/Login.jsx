@@ -94,7 +94,7 @@ const { data } = await axios.post(url, formData, {
     <form className="min-h-[80vh] flex items-center">
       <div className="flex flex-col m-auto p-8 items-start min-w-[340px] sm:min-w-96 border rounded-xl text-zinc-600 text-sm shadow-lg">
         <p className="text-2xl font-semibold">
-          {state === 'Sign Up' ? 'Create Account' : 'Login'}
+          {state === 'Sign Up' ? 'Please Create Account' : 'Login'}
         </p>
         <p>Please {state === 'Sign Up' ? 'Create Account' : 'Login'} to book appointments</p>
 
